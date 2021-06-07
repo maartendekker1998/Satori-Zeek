@@ -19,7 +19,10 @@ If you want to get the zeek logs in JSON output you will have to add the followi
 
 Outputs of the script can be found in the custom log file osfp.log
 
-The logs contain two OS-fingerprint signatures. One is for the satori DB : https://github.com/xnih/satori/blob/master/fingerprints/tcp.xml
-The other is for the CSIRT-MU PassiveOSFingerprint DB : https://github.com/CSIRT-MU/PassiveOSFingerprint/blob/master/fingerprint_database.csv
+The logs contain two OS-fingerprint signatures. One is for the satori DB : <br/>
+https://github.com/xnih/satori/blob/master/fingerprints/tcp.xml <br/>
+<br/>
+The other is for the CSIRT-MU PassiveOSFingerprint DB : <br/>
+https://github.com/CSIRT-MU/PassiveOSFingerprint/blob/master/fingerprint_database.csv
 
 
