@@ -1,5 +1,7 @@
 # Satori-Zeek
-Zeek port for Satori TCP/IP fingerprinting
+Zeek port for Satori TCP/IP fingerprinting <br/>
+
+Original code can be found here : https://github.com/xnih/satori <br/>
 
 How to install:
 
