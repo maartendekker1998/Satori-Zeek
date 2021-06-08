@@ -1,3 +1,4 @@
+
 # This Zeek script caclulates OS-fingerprints based on SYN-Size, Win-Size and TTL
 #
 # Author: Maarten P. Dekker (m.dekker@student.fontys.nl)
@@ -10,27 +11,34 @@ redef enum Log::ID += { LOG };
 }
 
 type OSFingerprintStorage: record {
+        #packet values
+        size:       string &default="";
+        hdrs:       string &default="";
+        oddities:   string &default="";
+        #IP values
         ip4_hl:     count &default=0;
         ip_id:      count &default=0;
         ip_len:     count &default=0;
+        df:         string &default="";
+        ttl:        string &default="";
+        #TCP values
+        win_size:   string &default="";
         tcp_hl:     count &default=0;
+        tcpopts:    string &default="";
         tcp_ack:    count &default=0;
         tcp_tser:   count &default=0;
+        tcp_flags:  count &default=0;
+        #SRC IP and connection UID
         src:        string &default="" &log;
+        uid:        string &default="" &log;
+        #Fingerprint Signatures
         satori_sig: string &default="" &log;
         csirt_sig:  string &default="" &log;
-        #csirt_srcip: string &default="" &log;
-        uid:        string &default="" &log;
-        tcp_flags:  count &default=0;
-        win_size:   string &default="";
-        size:       string &default="";
-        ttl:        string &default="";
-        df:         string &default="";
-        hdrs:       string &default="";
-        tcpopts:    string &default="";
-        oddities:   string &default="";
+        #Values used for making sure that the script runs correctly        
         tcpoptready: bool &default=F;
         synready:    bool &default=F;
+        pktready:    bool &default=F;
+        readycount:  count &default=0;
 };
 
 redef record connection += {
@@ -41,6 +49,23 @@ const sep = ":";
 
 event zeek_init() {
     Log::create_stream(OSFingerprint::LOG,[$columns=OSFingerprintStorage, $path="osfp"]);
+}
+
+function writeLog(c: connection){
+    
+        print(cat(c$osfp$tcpoptready) + " - " + cat(c$osfp$synready) + " - " + cat(c$osfp$pktready) + " - " + cat(c$uid));
+
+        when((c$osfp$tcpoptready == T) && (c$osfp$synready == T) && (c$osfp$pktready == T)){
+
+            #Build satori signature : Winsize -- TTL -- DF -- Headers Combined -- TCP Options -- oddities
+            local signature = string_cat(c$osfp$win_size, sep, c$osfp$ttl, sep, c$osfp$df, sep, c$osfp$hdrs, sep, c$osfp$tcpopts, sep, c$osfp$oddities);
+            c$osfp$satori_sig = signature;
+
+            #write signature to the OSF LOG
+            c$osfp$satori_sig = signature;
+            Log::write(OSFingerprint::LOG, c$osfp);
+        }
+
 }
 
 function computeNearTTL(info : count): string{
@@ -83,24 +108,18 @@ function detectOddities(c: connection): string{
     }
     
     len = (c$osfp$ip_len - c$osfp$ip4_hl - c$osfp$tcp_hl);
-    #print("calculated length is" + cat(len));
 
     if(len > 0){
         odd = odd + "D";
     }
-    # value of 2 is a SYN packet, value of 18 is a SYN-ACK
-    if((c$osfp$tcp_flags == 2 || c$osfp$tcp_flags == 18) && c$osfp$tcp_ack != 0){
+    
+    # value of 2 is a SYN packet
+    if(c$osfp$tcp_flags == 2  && c$osfp$tcp_ack != 0){
         odd = odd + "A";
     }
 
     if(c$osfp$tcp_flags == 2 && c$osfp$tcp_tser != 0){
         odd = odd + "T";
-    }
-
-    if(c$osfp$tcp_flags == 18){
-        if(|find_all(c$osfp$tcpopts ,/T/)| != 0){
-            odd = odd + "T";
-        }
     }
 
     if(odd == ""){
@@ -126,15 +145,13 @@ function decodeTCPOptions(c: connection, opt_vec : TCP::OptionList): string{
             res = res + "N,";
         }
         else if(opt_vec[i]$kind == 2){
-            # implement Max segment size
+            #Max segment size
             mss = opt_vec[i]$mss;
-            #print("mss is " + cat(mss));
             res = res + string_cat("M" + cat(mss) + ",");
         }
         else if(opt_vec[i]$kind == 3){
-            # implement Window Scale code
+            #Window Scale code
             local ws = opt_vec[i]$window_scale;
-            #print("ws is " + cat(ws));
             res = res + string_cat("W" + cat(ws) + ",");
         }
         else if(opt_vec[i]$kind == 4){
@@ -150,7 +167,7 @@ function decodeTCPOptions(c: connection, opt_vec : TCP::OptionList): string{
             res = res + "F,";
         }
         else if(opt_vec[i]$kind == 8){
-            # implement TcpTimeStampEchoReply code
+            # TcpTimeStampEchoReply
             res = res + "T,";
             #local tcpTS = opt_vec[i]$send_timestamp;
             tcpTSER = opt_vec[i]$echo_timestamp;
@@ -164,8 +181,8 @@ function decodeTCPOptions(c: connection, opt_vec : TCP::OptionList): string{
         else{
             res = res + "U,";
         }
-        #remove the "," from the end of the result
     }
+    #remove the "," from the end of the result
     final_result = cut_tail(res, 1);
     c$osfp$tcp_tser = tcpTSER;
     return final_result;
@@ -178,10 +195,12 @@ event new_packet(c: connection, p: pkt_hdr)
         c$osfp=OSFingerprintStorage();
     }
 
+    if(c$osfp$pktready == T){
+		return;
+	}
+
     c$osfp$uid = cat(c$uid);
 
-    
-    
     if( p?$ip){
         #source ip adress
         c$osfp$src = cat(p$ip$src);
@@ -202,26 +221,26 @@ event new_packet(c: connection, p: pkt_hdr)
         c$osfp$tcp_ack = p$tcp$ack;
     }
 
-    #if((c$osfp$tcp_flags == 2) || (c$osfp$tcp_flags == 18)){
     if(c$osfp$tcp_flags == 2){
         
         c$osfp$oddities = detectOddities(c);
+        
+        c$osfp$pktready = T;
+        c$osfp$readycount = c$osfp$readycount + 1;
 
-        when((c$osfp$tcpoptready == T) && (c$osfp$synready == T)){
-
-            #Build satori signature : Winsize -- TTL -- DF -- Headers Combined -- TCP Options -- oddities
-            local signature = string_cat(c$osfp$win_size, sep, c$osfp$ttl, sep, c$osfp$df, sep, c$osfp$hdrs, sep, c$osfp$tcpopts, sep, c$osfp$oddities);
-            c$osfp$satori_sig = signature;
-
-            #write signature to the OSF LOG
-                c$osfp$satori_sig = signature;
-                Log::write(OSFingerprint::LOG, c$osfp);
+        if(c$osfp$readycount == 3){
+            writeLog(c);
         }
     }
 }
 
 event tcp_options(c: connection, is_orig: bool, options: TCP::OptionList)
 {
+
+	if(c$osfp$tcpoptready == T){
+		return;
+	}
+
     if ( !c?$osfp )
         c$osfp=OSFingerprintStorage();
         
@@ -233,11 +252,20 @@ event tcp_options(c: connection, is_orig: bool, options: TCP::OptionList)
     c$osfp$tcpopts = decoded_tcp_options;
 
     c$osfp$tcpoptready = T;
+    c$osfp$readycount = c$osfp$readycount + 1;
 
+    if(c$osfp$readycount == 3){
+        writeLog(c);
+    }
 }
 
 event connection_SYN_packet(c: connection, pkt: SYN_packet)
 {
+
+	if(c$osfp$synready == T){
+		return;
+	}
+
     if ( !c?$osfp ){
         c$osfp=OSFingerprintStorage();
     }
@@ -277,6 +305,13 @@ event connection_SYN_packet(c: connection, pkt: SYN_packet)
     #combine headerlength of ip and tcp
     local headerscombined = (c$osfp$ip4_hl + c$osfp$tcp_hl);
     c$osfp$hdrs = cat(headerscombined);
+    
+    #print("almostready SYN" + cat(c$uid));
 
     c$osfp$synready = T;
+    c$osfp$readycount = c$osfp$readycount + 1;
+
+    if(c$osfp$readycount == 3){
+        writeLog(c);
+    }
 }
